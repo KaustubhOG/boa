@@ -6,7 +6,7 @@
 //! [spec]: https://tc39.es/ecma262/#sec-asyncgenerator-objects
 
 use crate::{
-    Context, JsArgs, JsData, JsError, JsResult, JsString,
+    Context, JsArgs, JsData, JsError, JsExpect, JsResult, JsString,
     builtins::{
         Promise,
         generator::GeneratorContext,
@@ -126,7 +126,7 @@ impl AsyncGenerator {
             &context.intrinsics().constructors().promise().constructor(),
             context,
         )
-        .expect("cannot fail with promise constructor");
+        .js_expect("cannot fail with promise constructor")?;
 
         // 3. Let result be Completion(AsyncGeneratorValidate(generator, empty)).
         // 4. IfAbruptRejectPromise(result, promiseCapability).
@@ -152,10 +152,11 @@ impl AsyncGenerator {
             let iterator_result = create_iter_result_object(JsValue::undefined(), true, context);
 
             // b. Perform ! Call(promiseCapability.[[Resolve]], undefined, « iteratorResult »).
-            promise_capability
-                .resolve()
-                .call(&JsValue::undefined(), &[iterator_result], context)
-                .expect("cannot fail per spec");
+            promise_capability.resolve().call(
+                &JsValue::undefined(),
+                &[iterator_result],
+                context,
+            )?;
 
             // c. Return promiseCapability.[[Promise]].
             return Ok(promise_capability.promise().clone().into());
@@ -198,7 +199,7 @@ impl AsyncGenerator {
             &context.intrinsics().constructors().promise().constructor(),
             context,
         )
-        .expect("cannot fail with promise constructor");
+        .js_expect("cannot fail with promise constructor")?;
 
         // 3. Let result be Completion(AsyncGeneratorValidate(generator, empty)).
         // 4. IfAbruptRejectPromise(result, promiseCapability).
@@ -264,7 +265,7 @@ impl AsyncGenerator {
             &context.intrinsics().constructors().promise().constructor(),
             context,
         )
-        .expect("cannot fail with promise constructor");
+        .js_expect("cannot fail with promise constructor")?;
 
         // 3. Let result be Completion(AsyncGeneratorValidate(generator, empty)).
         // 4. IfAbruptRejectPromise(result, promiseCapability).
@@ -300,14 +301,11 @@ impl AsyncGenerator {
         // 7. If state is completed, then
         if state == AsyncGeneratorState::Completed {
             // a. Perform ! Call(promiseCapability.[[Reject]], undefined, « exception »).
-            promise_capability
-                .reject()
-                .call(
-                    &JsValue::undefined(),
-                    &[args.get_or_undefined(0).clone()],
-                    context,
-                )
-                .expect("cannot fail per spec");
+            promise_capability.reject().call(
+                &JsValue::undefined(),
+                &[args.get_or_undefined(0).clone()],
+                context,
+            )?;
 
             // b. Return promiseCapability.[[Promise]].
             return Ok(promise_capability.promise().clone().into());
@@ -380,7 +378,7 @@ impl AsyncGenerator {
             .data_mut()
             .queue
             .pop_front()
-            .expect("1. Assert: generator.[[AsyncGeneratorQueue]] is not empty.");
+            .js_expect("1. Assert: generator.[[AsyncGeneratorQueue]] is not empty.")?;
 
         // 4. Let promiseCapability be next.[[Capability]].
         let promise_capability = &next.capability;
@@ -390,10 +388,11 @@ impl AsyncGenerator {
             // 6. If completion is a throw completion, then
             Err(e) => {
                 // a. Perform ! Call(promiseCapability.[[Reject]], undefined, « value »).
-                promise_capability
-                    .reject()
-                    .call(&JsValue::undefined(), &[e.into_opaque(context)?], context)
-                    .expect("cannot fail per spec");
+                promise_capability.reject().call(
+                    &JsValue::undefined(),
+                    &[e.into_opaque(context)?],
+                    context,
+                )?;
             }
 
             // 7. Else,
@@ -419,10 +418,11 @@ impl AsyncGenerator {
                 };
 
                 // d. Perform ! Call(promiseCapability.[[Resolve]], undefined, « iteratorResult »).
-                promise_capability
-                    .resolve()
-                    .call(&JsValue::undefined(), &[iterator_result], context)
-                    .expect("cannot fail per spec");
+                promise_capability.resolve().call(
+                    &JsValue::undefined(),
+                    &[iterator_result],
+                    context,
+                )?;
             }
         }
         // 8. Return unused.
@@ -456,7 +456,7 @@ impl AsyncGenerator {
             .data_mut()
             .context
             .take()
-            .expect("generator context cannot be empty here");
+            .js_expect("generator context cannot be empty here")?;
 
         // 5. Set generator.[[AsyncGeneratorState]] to executing.
         generator.borrow_mut().data_mut().state = AsyncGeneratorState::Executing;
@@ -521,7 +521,8 @@ impl AsyncGenerator {
         let promise = match promise_completion {
             Ok(value) => value
                 .downcast::<Promise>()
-                .expect("%Promise% constructor must always return a Promise object"),
+                .ok()
+                .js_expect("%Promise% constructor must always return a Promise object")?,
             // 8. If promiseCompletion is an abrupt completion, then
             Err(e) => {
                 // a. Perform AsyncGeneratorCompleteStep(generator, promiseCompletion, true).
@@ -649,7 +650,7 @@ impl AsyncGenerator {
                 .data()
                 .queue
                 .front()
-                .expect("must have entry")
+                .js_expect("must have entry")?
                 .completion
                 .clone();
 
