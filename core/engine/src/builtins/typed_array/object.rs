@@ -3,7 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::{
-    Context, JsNativeError, JsResult, JsString, JsValue,
+    Context, JsExpect, JsNativeError, JsResult, JsString, JsValue,
     builtins::array_buffer::BufferObject,
     object::{
         JsData, JsObject,
@@ -571,7 +571,7 @@ pub(crate) fn typed_array_exotic_own_property_keys(
 ) -> JsResult<Vec<PropertyKey>> {
     let inner = obj
         .downcast_ref::<TypedArray>()
-        .expect("TypedArray exotic method should only be callable from TypedArray objects");
+        .js_expect("TypedArray exotic method should only be callable from TypedArray objects")?;
 
     // 1. Let taRecord be MakeTypedArrayWithBufferWitnessRecord(O, seq-cst).
     // 2. Let keys be a new empty List.
@@ -610,9 +610,9 @@ pub(crate) fn typed_array_exotic_own_property_keys(
 ///
 /// [spec]: https://tc39.es/ecma262/sec-typedarraygetelement
 fn typed_array_get_element(obj: &JsObject, index: f64) -> Option<JsValue> {
-    let inner = obj
-        .downcast_ref::<TypedArray>()
-        .expect("Must be an TypedArray object");
+    let Some(inner) = obj.downcast_ref::<TypedArray>() else {
+        return None;
+    };
     let buffer = inner.viewed_array_buffer();
     let buffer = buffer.as_buffer();
 
@@ -660,8 +660,8 @@ pub(crate) fn typed_array_set_element(
     let obj = obj
         .clone()
         .downcast::<TypedArray>()
-        .expect("function can only be called for typed array objects");
-
+        .ok()
+        .js_expect("function can only be called for typed array objects")?;
     // b. Let arrayTypeName be the String value of O.[[TypedArrayName]].
     // e. Let elementType be the Element Type value in Table 73 for arrayTypeName.
     let elem_type = obj.borrow().data().kind();
