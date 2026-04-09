@@ -2,13 +2,13 @@ use super::internal_methods::InternalMethodPropertyContext;
 use crate::js_error;
 use crate::value::JsVariant;
 use crate::{
-    Context, JsExpect, JsResult, JsSymbol, JsValue,
+    Context, JsExpect, JsResult, JsSymbol, JsValue,JsError,
     builtins::{
         Array, Proxy,
         function::{BoundFunction, ClassFieldDefinition, OrdinaryFunction, set_function_name},
     },
     context::intrinsics::{StandardConstructor, StandardConstructors},
-    error::JsNativeError,
+    error::{JsNativeError, PanicError},
     native_function::NativeFunctionObject,
     object::{CONSTRUCTOR, JsObject, PROTOTYPE, PrivateElement, PrivateName},
     property::{PropertyDescriptor, PropertyDescriptorBuilder, PropertyKey, PropertyNameKind},
@@ -656,7 +656,9 @@ impl JsObject {
         // NOTE: This is an optimization, most of the cases that `LengthOfArrayLike` will be called
         //       is for arrays. The "length" property of an array is stored in the first index.
         if self.is_array() {
-            let borrowed_object = self.borrow();
+            let borrowed_object = self
+                .try_borrow()
+                .map_err(|e| JsError::from(PanicError::new(e.to_string())))?;
             // NOTE: using `to_u32` instead of `to_length` is an optimization,
             //       since arrays are limited to [0, 2^32 - 1] range.
             return borrowed_object.properties().storage[0]
@@ -906,7 +908,7 @@ impl JsObject {
         // 4. Let from be ! ToObject(source).
         let from = source
             .to_object(context)
-            .expect("function ToObject should never complete abruptly here");
+            .js_expect("function ToObject should never complete abruptly here")?;
 
         // 5. Let keys be ? from.[[OwnPropertyKeys]]().
         // 6. For each element nextKey of keys, do
@@ -939,7 +941,7 @@ impl JsObject {
 
                     // 2. Perform ! CreateDataPropertyOrThrow(target, nextKey, propValue).
                     self.create_data_property_or_throw(key, prop_value, context)
-                        .expect("CreateDataPropertyOrThrow should never complete abruptly here");
+                        .js_expect("CreateDataPropertyOrThrow should never complete abruptly here")?;
                 }
             }
         }
@@ -1019,11 +1021,12 @@ impl JsObject {
         }
 
         // 5. Append PrivateElement { [[Key]]: P, [[Kind]]: field, [[Value]]: value } to O.[[PrivateElements]].
-        self.borrow_mut()
+        self.try_borrow_mut()
+            .map_err(|e| JsError::from(PanicError::new(e.to_string())))?
             .private_elements
             .push((name.clone(), PrivateElement::Field(value)));
 
-        // 5. Return unused.
+        // 6. Return unused.
         Ok(())
     }
 
@@ -1090,7 +1093,8 @@ impl JsObject {
         }
 
         // 5. Append method to O.[[PrivateElements]].
-        self.borrow_mut()
+        self.try_borrow_mut()
+            .map_err(|e| JsError::from(PanicError::new(e.to_string())))?
             .append_private_element(name.clone(), method.clone());
 
         // 6. Return unused.
@@ -1133,7 +1137,7 @@ impl JsObject {
                         .with_message("private property was defined without a getter")
                 })?;
 
-                // 7. Return ? Call(getter, O).
+                // 7. Return ? Call(getter, O).
                 getter.call(&self.clone().into(), &[], context)
             }
         }
@@ -1155,7 +1159,9 @@ impl JsObject {
     ) -> JsResult<()> {
         // 1. Let entry be PrivateElementFind(O, P).
         // Note: This function is inlined here for mutable access.
-        let mut object_mut = self.borrow_mut();
+        let mut object_mut = self
+            .try_borrow_mut()
+            .map_err(|e| JsError::from(PanicError::new(e.to_string())))?;
         let entry = object_mut
             .private_elements
             .iter_mut()
@@ -1193,7 +1199,7 @@ impl JsObject {
                         .with_message("private property was defined without a setter")
                 })?;
 
-                // d. Perform ? Call(setter, O, « value »).
+                // d. Perform ? Call(setter, O, « value »).
                 drop(object_mut);
                 setter.call(&self.clone().into(), &[value], context)?;
             }
@@ -1223,7 +1229,7 @@ impl JsObject {
         };
 
         // 3. If initializer is not empty, then
-        // a. Let initValue be ? Call(initializer, receiver).
+        // a. Let initValue be ? Call(initializer, receiver).
         // 4. Else, let initValue be undefined.
         let init_value = initializer.call(&self.clone().into(), &[], context)?;
 
@@ -1231,7 +1237,7 @@ impl JsObject {
             // 1. Let fieldName be fieldRecord.[[Name]].
             // 5. If fieldName is a Private Name, then
             ClassFieldDefinition::Private(field_name, _) => {
-                // a. Perform ? PrivateFieldAdd(receiver, fieldName, initValue).
+                // a. Perform ? PrivateFieldAdd(receiver, fieldName, initValue).
                 self.private_field_add(field_name, init_value, context)?;
             }
             // 1. Let fieldName be fieldRecord.[[Name]].
@@ -1249,7 +1255,7 @@ impl JsObject {
                 }
 
                 // a. Assert: IsPropertyKey(fieldName) is true.
-                // b. Perform ? CreateDataPropertyOrThrow(receiver, fieldName, initValue).
+                // b. Perform ? CreateDataPropertyOrThrow(receiver, fieldName, initValue).
                 self.create_data_property_or_throw(field_name.clone(), init_value, context)?;
             }
         }
@@ -1278,14 +1284,14 @@ impl JsObject {
         // 1. Let methods be the value of constructor.[[PrivateMethods]].
         // 2. For each PrivateElement method of methods, do
         for (name, method) in constructor_function.get_private_methods() {
-            // a. Perform ? PrivateMethodOrAccessorAdd(O, method).
+            // a. Perform ? PrivateMethodOrAccessorAdd(O, method).
             self.private_method_or_accessor_add(name, method, context)?;
         }
 
         // 3. Let fields be the value of constructor.[[Fields]].
         // 4. For each element fieldRecord of fields, do
         for field_record in constructor_function.get_fields() {
-            // a. Perform ? DefineField(O, fieldRecord).
+            // a. Perform ? DefineField(O, fieldRecord).
             self.define_field(field_record, context)?;
         }
 
@@ -1346,7 +1352,6 @@ impl JsValue {
         let o = self.to_object(context)?;
 
         // 2. Return ? O.[[Get]](P, V).
-
         o.__get__(
             &key.into(),
             self.clone(),
